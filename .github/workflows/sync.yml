@@ -2,6 +2,8 @@ name: Sync 7DS Origin -> Discord
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"   # toutes les 6h (ajuste si tu veux)
 
 permissions:
   contents: write
@@ -14,11 +16,9 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
@@ -29,23 +29,14 @@ jobs:
       - name: Install Playwright browser
         run: python -m playwright install --with-deps chromium
 
-      - name: Cache Argos models
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.local/share/argos-translate
-            ~/.cache/argos-translate
-          key: argos-en-fr-v1
-
       - name: Run sync
         env:
-          # IMPORTANT: ton package "lib" est dans scripts/lib => PYTHONPATH doit pointer sur "scripts"
           PYTHONPATH: scripts
 
-          # Webhooks (met-les en GitHub Secrets)
           WEBHOOK_CHARACTERS: ${{ secrets.WEBHOOK_CHARACTERS }}
-          WEBHOOK_COMBAT: ${{ secrets.WEBHOOK_COMBAT }}
           WEBHOOK_GENERAL: ${{ secrets.WEBHOOK_GENERAL }}
+          WEBHOOK_COMBAT: ${{ secrets.WEBHOOK_COMBAT }}
+
           WEBHOOK_BOSS_INFO: ${{ secrets.WEBHOOK_BOSS_INFO }}
           WEBHOOK_GUARDIAN_GOLEM: ${{ secrets.WEBHOOK_GUARDIAN_GOLEM }}
           WEBHOOK_DRAKE: ${{ secrets.WEBHOOK_DRAKE }}
