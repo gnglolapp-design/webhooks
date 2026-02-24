@@ -1,8 +1,13 @@
-import json
 import time
 from typing import Any, Dict, Optional, Tuple
 
 import requests
+from requests.adapters import HTTPAdapter
+
+try:
+    from urllib3.util.retry import Retry
+except Exception:  # pragma: no cover
+    Retry = None  # type: ignore
 
 
 DISCORD_API_TIMEOUT = 30
@@ -17,8 +22,44 @@ class DiscordHTTPError(RuntimeError):
         self.body = body
 
 
+def http_session() -> requests.Session:
+    """
+    Session requests avec retries réseau (et quelques 5xx).
+    Les 429 Discord sont gérés dans discord_request().
+    """
+    s = requests.Session()
+
+    if Retry is not None:
+        # Compat urllib3 (allowed_methods vs method_whitelist)
+        try:
+            retry = Retry(
+                total=5,
+                connect=5,
+                read=5,
+                backoff_factor=0.5,
+                status_forcelist=[500, 502, 503, 504],
+                allowed_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                raise_on_status=False,
+            )
+        except TypeError:
+            retry = Retry(
+                total=5,
+                connect=5,
+                read=5,
+                backoff_factor=0.5,
+                status_forcelist=[500, 502, 503, 504],
+                method_whitelist=["GET", "POST", "PUT", "PATCH", "DELETE"],  # type: ignore
+                raise_on_status=False,
+            )
+
+        adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10)
+        s.mount("https://", adapter)
+        s.mount("http://", adapter)
+
+    return s
+
+
 def _sleep_backoff(attempt: int) -> None:
-    # backoff simple (1s, 2s, 4s, ...)
     time.sleep(min(2 ** attempt, 20))
 
 
@@ -75,11 +116,11 @@ def discord_request(
                     return resp.status_code, None, last_text
             return resp.status_code, None, last_text
 
-        # 404 autorisé (utile pour savoir si le message existe)
+        # 404 autorisé
         if resp.status_code == 404 and allow_404:
             return resp.status_code, None, last_text
 
-        # Autres erreurs => pas de retry infini; petite tolérance sur 5xx
+        # 5xx -> retry limité
         if 500 <= resp.status_code < 600 and attempt < MAX_RETRIES - 1:
             _sleep_backoff(attempt)
             continue
@@ -90,7 +131,6 @@ def discord_request(
 
 
 def _webhook_base(webhook_url: str) -> str:
-    # webhook_url attendu: https://discord.com/api/webhooks/{id}/{token}
     return webhook_url.rstrip("/")
 
 
@@ -99,9 +139,6 @@ def create_webhook_message(
     webhook_url: str,
     payload: Dict[str, Any],
 ) -> str:
-    """
-    POST -> retourne l'id du message créé.
-    """
     url = f"{_webhook_base(webhook_url)}?wait=true"
     status, data, _ = discord_request(session, "POST", url, json_payload=payload)
     if not data or "id" not in data:
@@ -115,9 +152,6 @@ def edit_webhook_message(
     message_id: str,
     payload: Dict[str, Any],
 ) -> Tuple[bool, str]:
-    """
-    PATCH -> (existe, texte_erreur)
-    """
     url = f"{_webhook_base(webhook_url)}/messages/{message_id}"
     status, _, text = discord_request(
         session, "PATCH", url, json_payload=payload, allow_404=True
@@ -138,11 +172,9 @@ def upsert_message(
     strict_no_duplicate: bool = True,
 ) -> bool:
     """
-    - Si hash identique: ne fait rien.
-    - Si message_id existe: tente PATCH.
-        - Si PATCH 404: recrée automatiquement (POST) et met à jour le state.
-    - Si pas de message_id: POST.
-    Retourne True si une action réseau a eu lieu (post/patch).
+    - Si hash identique: skip
+    - Si message_id: PATCH, si 404 => POST + update state
+    - Sinon: POST
     """
     if not webhook_url:
         raise RuntimeError(f"Webhook manquant pour section={section}")
@@ -152,12 +184,10 @@ def upsert_message(
     prev_hash = entry.get("hash")
     prev_mid = entry.get("message_id")
 
-    # Anti-spam si inchangé
     if prev_hash and prev_hash == src_hash:
         print(f"[{section.upper()}] {item_key} inchangé -> skip")
         return False
 
-    # Essayer d'éditer si on a un message_id
     if prev_mid:
         exists, _ = edit_webhook_message(session, webhook_url, str(prev_mid), payload)
         if exists:
@@ -165,16 +195,13 @@ def upsert_message(
             print(f"[{section.upper()}] {item_key} -> message mis à jour")
             return True
 
-        # 404: message supprimé / introuvable -> on recrée
-        # IMPORTANT: même en strict, il n’y a PAS de doublon possible puisque le message n’existe plus.
+        # 404: message supprimé => on recrée (pas un doublon)
         new_id = create_webhook_message(session, webhook_url, payload)
         sec[item_key] = {"message_id": new_id, "hash": src_hash}
         print(f"[{section.upper()}] {item_key} -> message recréé (ancien introuvable)")
         return True
 
-    # Pas de message_id: création
-    # En mode strict, on se base sur le hash (et pas sur un message_id) : si hash différent, on poste.
-    # Le script global doit contrôler la pagination/limites.
+    # pas de message_id
     new_id = create_webhook_message(session, webhook_url, payload)
     sec[item_key] = {"message_id": new_id, "hash": src_hash}
     print(f"[{section.upper()}] {item_key} -> message créé")
