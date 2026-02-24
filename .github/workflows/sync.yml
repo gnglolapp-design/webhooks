@@ -1,59 +1,88 @@
-name: Sync 7DS Origin -> Discord
+name: Sync Hideout -> Discord
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"   # toutes les 6h (ajuste si tu veux)
+    - cron: "0 * * * *" # toutes les heures
 
 permissions:
   contents: write
 
 concurrency:
-  group: sync-7ds-origin
+  group: sync-hideout
   cancel-in-progress: true
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Cache Playwright
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-chromium-1155
+
+      - name: Cache Argos models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/argos-translate
+            ~/.cache/argos-translate
+          key: argos-en-fr-v2
 
       - name: Install deps
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
 
       - name: Install Playwright browser
-        run: python -m playwright install --with-deps chromium
+        run: |
+          python -m playwright install --with-deps chromium
 
       - name: Run sync
         env:
           PYTHONPATH: scripts
+          # Webhooks (mets tes variables GitHub existantes ici si elles ont d'autres noms)
+          WEBHOOK_PERSONNAGES: ${{ vars.WEBHOOK_PERSONNAGES }}
+          WEBHOOK_COMBAT: ${{ vars.WEBHOOK_COMBAT }}
+          WEBHOOK_INFOS_GENERALES: ${{ vars.WEBHOOK_INFOS_GENERALES }}
+          WEBHOOK_BOSS_INFOS: ${{ vars.WEBHOOK_BOSS_INFOS }}
+          WEBHOOK_GUARDIAN_GOLEM: ${{ vars.WEBHOOK_GUARDIAN_GOLEM }}
+          WEBHOOK_DRAKE: ${{ vars.WEBHOOK_DRAKE }}
+          WEBHOOK_RED_DEMON: ${{ vars.WEBHOOK_RED_DEMON }}
+          WEBHOOK_GREY_DEMON: ${{ vars.WEBHOOK_GREY_DEMON }}
+          WEBHOOK_ALBION: ${{ vars.WEBHOOK_ALBION }}
 
-          WEBHOOK_CHARACTERS: ${{ secrets.WEBHOOK_CHARACTERS }}
-          WEBHOOK_GENERAL: ${{ secrets.WEBHOOK_GENERAL }}
-          WEBHOOK_COMBAT: ${{ secrets.WEBHOOK_COMBAT }}
-
-          WEBHOOK_BOSS_INFO: ${{ secrets.WEBHOOK_BOSS_INFO }}
-          WEBHOOK_GUARDIAN_GOLEM: ${{ secrets.WEBHOOK_GUARDIAN_GOLEM }}
-          WEBHOOK_DRAKE: ${{ secrets.WEBHOOK_DRAKE }}
-          WEBHOOK_RED_DEMON: ${{ secrets.WEBHOOK_RED_DEMON }}
-          WEBHOOK_GREY_DEMON: ${{ secrets.WEBHOOK_GREY_DEMON }}
-          WEBHOOK_ALBION: ${{ secrets.WEBHOOK_ALBION }}
-
-        run: python scripts/sync.py
+          DISCORD_USERNAME: "7DS Origin DB"
+          EMBED_COLOR: "#C99700"
+        run: |
+          python scripts/sync.py
 
       - name: Commit updated state (if changed)
         run: |
-          if [[ -n "$(git status --porcelain state)" ]]; then
+          if git status --porcelain | grep -q "^ M state/state.json\|^?? state/state.json"; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add state/state.json
-            git commit -m "chore: update sync state"
-            git push origin HEAD:main
+            git commit -m "chore(state): update discord message ids"
+            git push
           else
-            echo "State unchanged"
+            echo "State inchangé."
           fi
