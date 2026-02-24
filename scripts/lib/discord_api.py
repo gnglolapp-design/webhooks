@@ -1,93 +1,181 @@
-import re
+import json
 import time
+from typing import Any, Dict, Optional, Tuple
+
 import requests
-from typing import Any, Dict
-from .utils import sha, stable_hash
 
-UA = "Mozilla/5.0 (GitHubActions; 7DSOriginDiscordSync/4.0)"
 
-def http_session() -> requests.Session:
-    s = requests.Session()
-    s.headers.update({"User-Agent": UA})
-    return s
+DISCORD_API_TIMEOUT = 30
+MAX_RETRIES = 6
 
-def redact_webhook_url(url: str) -> str:
-    return re.sub(r"(https?://discord\.com/api/webhooks/\d+/)[^/?]+", r"\1[REDACTED]", url)
 
-def discord_request_raw(session: requests.Session, method: str, url: str, **kwargs) -> requests.Response:
-    while True:
-        r = session.request(method, url, timeout=60, **kwargs)
-        if r.status_code == 429:
-            try:
-                data = r.json()
-                retry = float(data.get("retry_after", 1.0))
-            except Exception:
-                retry = 1.0
-            time.sleep(retry + 0.25)
+class DiscordHTTPError(RuntimeError):
+    def __init__(self, status: int, url: str, body: str = ""):
+        super().__init__(f"Discord HTTP {status} sur {url} :: {body[:400]}")
+        self.status = status
+        self.url = url
+        self.body = body
+
+
+def _sleep_backoff(attempt: int) -> None:
+    # backoff simple (1s, 2s, 4s, ...)
+    time.sleep(min(2 ** attempt, 20))
+
+
+def discord_request(
+    session: requests.Session,
+    method: str,
+    url: str,
+    json_payload: Optional[Dict[str, Any]] = None,
+    timeout: int = DISCORD_API_TIMEOUT,
+    allow_404: bool = False,
+) -> Tuple[int, Optional[Dict[str, Any]], str]:
+    """
+    Retourne: (status_code, json|None, text)
+    Gère 429 (rate limit) avec retries.
+    """
+    headers = {
+        "User-Agent": "7DS-Origin-DB-Sync/1.0",
+        "Content-Type": "application/json",
+    }
+
+    last_text = ""
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = session.request(
+                method=method.upper(),
+                url=url,
+                headers=headers,
+                json=json_payload,
+                timeout=timeout,
+            )
+        except requests.RequestException as e:
+            last_text = str(e)
+            _sleep_backoff(attempt)
             continue
-        return r
 
-def ensure_webhook_fingerprint(state: Dict[str, Any], webhook_key: str, webhook_url: str) -> None:
-    fp = sha(webhook_url)
-    old = state["webhook_fp"].get(webhook_key)
-    if old and old != fp:
-        raise RuntimeError(
-            f"Webhook '{webhook_key}' a changé (empreinte différente). "
-            f"Pour éviter les doublons, arrêt. "
-            f"Supprime les anciens messages OU reset volontairement state/state.json."
-        )
-    state["webhook_fp"][webhook_key] = fp
+        last_text = resp.text or ""
+
+        # Rate limit
+        if resp.status_code == 429:
+            try:
+                data = resp.json()
+                retry_after = float(data.get("retry_after", 1.0))
+            except Exception:
+                retry_after = 1.0
+            time.sleep(min(retry_after, 10.0))
+            continue
+
+        # OK
+        if 200 <= resp.status_code < 300:
+            if resp.text:
+                try:
+                    return resp.status_code, resp.json(), last_text
+                except Exception:
+                    return resp.status_code, None, last_text
+            return resp.status_code, None, last_text
+
+        # 404 autorisé (utile pour savoir si le message existe)
+        if resp.status_code == 404 and allow_404:
+            return resp.status_code, None, last_text
+
+        # Autres erreurs => pas de retry infini; petite tolérance sur 5xx
+        if 500 <= resp.status_code < 600 and attempt < MAX_RETRIES - 1:
+            _sleep_backoff(attempt)
+            continue
+
+        raise DiscordHTTPError(resp.status_code, url, last_text)
+
+    raise DiscordHTTPError(0, url, f"Échec après retries: {last_text}")
+
+
+def _webhook_base(webhook_url: str) -> str:
+    # webhook_url attendu: https://discord.com/api/webhooks/{id}/{token}
+    return webhook_url.rstrip("/")
+
+
+def create_webhook_message(
+    session: requests.Session,
+    webhook_url: str,
+    payload: Dict[str, Any],
+) -> str:
+    """
+    POST -> retourne l'id du message créé.
+    """
+    url = f"{_webhook_base(webhook_url)}?wait=true"
+    status, data, _ = discord_request(session, "POST", url, json_payload=payload)
+    if not data or "id" not in data:
+        raise RuntimeError(f"Réponse Discord inattendue à la création (status={status}).")
+    return str(data["id"])
+
+
+def edit_webhook_message(
+    session: requests.Session,
+    webhook_url: str,
+    message_id: str,
+    payload: Dict[str, Any],
+) -> Tuple[bool, str]:
+    """
+    PATCH -> (existe, texte_erreur)
+    """
+    url = f"{_webhook_base(webhook_url)}/messages/{message_id}"
+    status, _, text = discord_request(
+        session, "PATCH", url, json_payload=payload, allow_404=True
+    )
+    if status == 404:
+        return False, text
+    return True, ""
+
 
 def upsert_message(
     session: requests.Session,
     state: Dict[str, Any],
-    webhook_key: str,
+    section: str,
     webhook_url: str,
     item_key: str,
     payload: Dict[str, Any],
-    source_hash: str,
+    src_hash: str,
     strict_no_duplicate: bool = True,
-) -> None:
-    payload.setdefault("allowed_mentions", {"parse": []})
-    ensure_webhook_fingerprint(state, webhook_key, webhook_url)
+) -> bool:
+    """
+    - Si hash identique: ne fait rien.
+    - Si message_id existe: tente PATCH.
+        - Si PATCH 404: recrée automatiquement (POST) et met à jour le state.
+    - Si pas de message_id: POST.
+    Retourne True si une action réseau a eu lieu (post/patch).
+    """
+    if not webhook_url:
+        raise RuntimeError(f"Webhook manquant pour section={section}")
 
-    item = state["items"].get(item_key, {})
-    prev_source = item.get("source_hash")
-    if prev_source == source_hash:
-        return
+    sec = state.setdefault(section, {})
+    entry = sec.get(item_key, {}) if isinstance(sec, dict) else {}
+    prev_hash = entry.get("hash")
+    prev_mid = entry.get("message_id")
 
-    payload_hash = stable_hash(payload)
-    message_id = item.get("message_id")
+    # Anti-spam si inchangé
+    if prev_hash and prev_hash == src_hash:
+        print(f"[{section.upper()}] {item_key} inchangé -> skip")
+        return False
 
-    if message_id:
-        edit_url = f"{webhook_url}/messages/{message_id}"
-        r = discord_request_raw(session, "PATCH", edit_url, json=payload)
+    # Essayer d'éditer si on a un message_id
+    if prev_mid:
+        exists, _ = edit_webhook_message(session, webhook_url, str(prev_mid), payload)
+        if exists:
+            sec[item_key] = {"message_id": str(prev_mid), "hash": src_hash}
+            print(f"[{section.upper()}] {item_key} -> message mis à jour")
+            return True
 
-        if r.status_code == 404:
-            # message supprimé à la main : soit on reposte, soit on bloque (anti-doublon strict)
-            if strict_no_duplicate:
-                raise RuntimeError(
-                    f"Message introuvable (404) pour {item_key}. "
-                    f"Anti-doublons strict activé : je ne reposte pas. "
-                    f"Supprime/clean le state pour repartir propre."
-                )
-            create_url = f"{webhook_url}?wait=true"
-            resp = discord_request_raw(session, "POST", create_url, json=payload)
-            if not (200 <= resp.status_code < 300):
-                raise RuntimeError(f"Discord {resp.status_code} POST {redact_webhook_url(create_url)}: {resp.text[:300]!r}")
-            data = resp.json()
-            state["items"][item_key] = {"message_id": data["id"], "payload_hash": payload_hash, "source_hash": source_hash}
-            return
+        # 404: message supprimé / introuvable -> on recrée
+        # IMPORTANT: même en strict, il n’y a PAS de doublon possible puisque le message n’existe plus.
+        new_id = create_webhook_message(session, webhook_url, payload)
+        sec[item_key] = {"message_id": new_id, "hash": src_hash}
+        print(f"[{section.upper()}] {item_key} -> message recréé (ancien introuvable)")
+        return True
 
-        if not (200 <= r.status_code < 300):
-            raise RuntimeError(f"Discord {r.status_code} PATCH {redact_webhook_url(edit_url)}: {r.text[:300]!r}")
-
-        state["items"][item_key] = {"message_id": message_id, "payload_hash": payload_hash, "source_hash": source_hash}
-        return
-
-    create_url = f"{webhook_url}?wait=true"
-    resp = discord_request_raw(session, "POST", create_url, json=payload)
-    if not (200 <= resp.status_code < 300):
-        raise RuntimeError(f"Discord {resp.status_code} POST {redact_webhook_url(create_url)}: {resp.text[:300]!r}")
-    data = resp.json()
-    state["items"][item_key] = {"message_id": data["id"], "payload_hash": payload_hash, "source_hash": source_hash}
+    # Pas de message_id: création
+    # En mode strict, on se base sur le hash (et pas sur un message_id) : si hash différent, on poste.
+    # Le script global doit contrôler la pagination/limites.
+    new_id = create_webhook_message(session, webhook_url, payload)
+    sec[item_key] = {"message_id": new_id, "hash": src_hash}
+    print(f"[{section.upper()}] {item_key} -> message créé")
+    return True
