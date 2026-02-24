@@ -12,13 +12,11 @@ from playwright.sync_api import sync_playwright
 BASE = "https://hideoutgacha.com/games/seven-deadly-sins-origin"
 URLS = {
     "characters": f"{BASE}/characters",
-    "combat_guide": f"{BASE}/combat-guide",
-    "general_info": f"{BASE}/general-info",
     "boss_guide": f"{BASE}/boss-guide",
 }
 
 STATE_PATH = "state/state.json"
-UA = "Mozilla/5.0 (GitHubActions; 7DSOriginDiscordSync/2.1)"
+UA = "Mozilla/5.0 (GitHubActions; 7DSOriginDiscordSync/2.2)"
 
 BOSS_WEBHOOK_KEYS = {
     "Information": "boss_information",
@@ -29,14 +27,16 @@ BOSS_WEBHOOK_KEYS = {
     "Albion": "boss_albion",
 }
 
+# IMPORTANT: on met volontairement les DEUX clés "Potentials" et "Potentiels"
+# pour éviter les KeyError si tu modifies une partie du code.
 FR = {
     "Basic Info": "Infos",
     "Weapons": "Armes",
     "Armor": "Armure",
     "Potentials": "Potentiels",
+    "Potentiels": "Potentiels",
+
     "Boss Guide": "Guide Boss",
-    "Combat Guide": "Guide Combat",
-    "General Info": "Infos générales",
     "Overview": "Aperçu",
     "Base Stats": "Stats de base",
 
@@ -67,6 +67,12 @@ NAV_TRASH = {
     "Back to Seven Deadly Sins: Origin",
 }
 
+def tr(key: str, fallback: Optional[str] = None) -> str:
+    """Traduction robuste: jamais de KeyError."""
+    if fallback is None:
+        fallback = key
+    return FR.get(key, fallback)
+
 # =============== State ===============
 
 def load_state() -> Dict:
@@ -92,7 +98,6 @@ def http_session() -> requests.Session:
     return s
 
 def redact_discord_webhook_url(url: str) -> str:
-    # masque le token webhook dans les erreurs/logs
     return re.sub(r"(https?://discord\.com/api/webhooks/\d+/)[^/?]+", r"\1[REDACTED]", url)
 
 def discord_request_raw(session: requests.Session, method: str, url: str, **kwargs) -> requests.Response:
@@ -111,7 +116,6 @@ def discord_request_raw(session: requests.Session, method: str, url: str, **kwar
 def discord_request(session: requests.Session, method: str, url: str, **kwargs) -> requests.Response:
     r = discord_request_raw(session, method, url, **kwargs)
     if not (200 <= r.status_code < 300):
-        # évite de leak l'URL complète
         raise RuntimeError(
             f"Discord API error {r.status_code} on {method} {redact_discord_webhook_url(url)} "
             f"(body: {r.text[:300]!r})"
@@ -131,7 +135,6 @@ def upsert_webhook_message(session: requests.Session, state: Dict, webhook_url: 
         edit_url = f"{webhook_url}/messages/{prev['message_id']}"
         r = discord_request_raw(session, "PATCH", edit_url, json=payload)
         if r.status_code == 404:
-            # message introuvable (supprimé / ancien webhook / token changé) => on reposte
             create_url = f"{webhook_url}?wait=true"
             resp = discord_request(session, "POST", create_url, json=payload).json()
             state["messages"][key] = {"message_id": resp["id"], "hash": h}
@@ -149,7 +152,7 @@ def upsert_webhook_message(session: requests.Session, state: Dict, webhook_url: 
     resp = discord_request(session, "POST", create_url, json=payload).json()
     state["messages"][key] = {"message_id": resp["id"], "hash": h}
 
-# =============== Helpers (text/embeds) ===============
+# =============== Embeds / text ===============
 
 def norm_line(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip()
@@ -175,7 +178,6 @@ def chunk_by_chars(text: str, limit: int = 3500) -> List[str]:
         return []
     if len(text) <= limit:
         return [text]
-
     chunks = []
     cur = ""
     for line in text.splitlines():
@@ -219,14 +221,13 @@ def embeds_from_long_text(base_title: str, url: str, text: str, thumbnail: str =
     chunks = chunk_by_chars(text, limit=3500)
     if not chunks:
         return [make_embed(base_title, url, description=" ", thumbnail=thumbnail, footer=footer)]
-
     embeds = []
-    for i, ch in enumerate(chunks[:10]):  # max 10 embeds/message
+    for i, ch in enumerate(chunks[:10]):
         t = base_title if len(chunks) == 1 else f"{base_title} ({i+1}/{min(len(chunks),10)})"
         embeds.append(make_embed(t, url, description=ch, thumbnail=thumbnail, footer=footer))
     return embeds
 
-# =============== Playwright extractors ===============
+# =============== Playwright helpers ===============
 
 def goto_page(page, url: str) -> None:
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
@@ -260,8 +261,7 @@ def extract_best_block_text(page) -> str:
         if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
         return true;
       };
-      const candidates = Array.from(root.querySelectorAll('section, article, div'))
-        .filter(isVisible);
+      const candidates = Array.from(root.querySelectorAll('section, article, div')).filter(isVisible);
       let best = root;
       let bestLen = (root.innerText || '').trim().length;
       for (const el of candidates) {
@@ -272,8 +272,7 @@ def extract_best_block_text(page) -> str:
     }
     """
     try:
-        t = page.evaluate(js)
-        return t or ""
+        return page.evaluate(js) or ""
     except Exception:
         return ""
 
@@ -307,11 +306,27 @@ def extract_largest_image(page) -> str:
     except Exception:
         return ""
 
-# =============== Parsing (characters) ===============
+# =============== Requests: roster ===============
+
+def fetch_html(session: requests.Session, url: str) -> str:
+    r = session.get(url, timeout=45, headers={"User-Agent": UA})
+    r.raise_for_status()
+    return r.text
+
+def parse_character_roster(session: requests.Session) -> List[str]:
+    html = fetch_html(session, URLS["characters"])
+    soup = BeautifulSoup(html, "lxml")
+    links = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if "/games/seven-deadly-sins-origin/characters/" in href:
+            links.append(href if href.startswith("http") else "https://hideoutgacha.com" + href)
+    return sorted(set(links))
+
+# =============== Parsing content ===============
 
 def parse_basic_info(text: str) -> Tuple[str, List[Tuple[str, str]]]:
     lines = clean_lines(text.splitlines())
-
     overview = ""
     base_stats: List[Tuple[str, str]] = []
 
@@ -327,8 +342,7 @@ def parse_basic_info(text: str) -> Tuple[str, List[Tuple[str, str]]]:
 
     if i_over != -1:
         end = i_base if i_base != -1 else min(i_over + 40, len(lines))
-        overview_lines = lines[i_over + 1:end]
-        overview = " ".join(overview_lines).strip()
+        overview = " ".join(lines[i_over + 1:end]).strip()
 
     if i_base != -1:
         block = lines[i_base + 1:i_base + 120]
@@ -346,7 +360,6 @@ def parse_basic_info(text: str) -> Tuple[str, List[Tuple[str, str]]]:
 
 def parse_weapon_skills(text: str) -> Tuple[str, str, List[Tuple[str, str, str]]]:
     lines = clean_lines(text.splitlines())
-
     weapon_name = lines[0] if lines else ""
     element = ""
     for l in lines[1:10]:
@@ -375,14 +388,8 @@ def parse_weapon_skills(text: str) -> Tuple[str, str, List[Tuple[str, str, str]]
 
     return weapon_name, element, skills
 
-def weapon_field_name(typ: str, idx: int, total_same: int) -> str:
-    base = FR.get(typ, typ)
-    if total_same > 1:
-        return f"{base} #{idx}"
-    return base
-
 def build_weapon_embed(char_name: str, url: str, thumb: str, weapon_name: str, element: str, skills: List[Tuple[str, str, str]], footer: str) -> Dict:
-    title = f"{char_name} — {FR['Weapons']} : {weapon_name}"
+    title = f"{char_name} — {tr('Weapons')} : {weapon_name}"
     if element:
         title += f" ({element})"
 
@@ -400,7 +407,7 @@ def build_weapon_embed(char_name: str, url: str, thumb: str, weapon_name: str, e
             if len(value) > 1024:
                 value = value[:1021] + "..."
             fields.append({
-                "name": weapon_field_name(typ, idx, len(items))[:256],
+                "name": tr(typ)[:256],
                 "value": value if value else " ",
                 "inline": False
             })
@@ -413,23 +420,6 @@ def build_weapon_embed(char_name: str, url: str, thumb: str, weapon_name: str, e
         fields = [{"name": "Détails", "value": "Informations non détectées.", "inline": False}]
 
     return make_embed(title, url, description=" ", thumbnail=thumb, fields=fields, footer=footer)
-
-# =============== Roster (requests) ===============
-
-def fetch_html(session: requests.Session, url: str) -> str:
-    r = session.get(url, timeout=45, headers={"User-Agent": UA})
-    r.raise_for_status()
-    return r.text
-
-def parse_character_roster(session: requests.Session) -> List[str]:
-    html = fetch_html(session, URLS["characters"])
-    soup = BeautifulSoup(html, "lxml")
-    links = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"].strip()
-        if "/games/seven-deadly-sins-origin/characters/" in href:
-            links.append(href if href.startswith("http") else "https://hideoutgacha.com" + href)
-    return sorted(set(links))
 
 # =============== Scrapers ===============
 
@@ -454,12 +444,10 @@ def scrape_character(page, char_url: str, extra_footer: str) -> List[Dict]:
     page.wait_for_timeout(250)
     basic_text = extract_best_block_text(page)
     overview, base_stats = parse_basic_info(basic_text)
-
     fields = [{"name": k[:256], "value": v[:1024], "inline": True} for k, v in base_stats[:25]]
-    desc = f"**{FR['Overview']}**\n{overview}" if overview else " "
-
+    desc = f"**{tr('Overview')}**\n{overview}" if overview else " "
     embeds.append(make_embed(
-        title=f"{char_name} — {FR['Basic Info']}",
+        title=f"{char_name} — {tr('Basic Info')}",
         url=char_url,
         description=desc,
         thumbnail=thumb,
@@ -524,18 +512,18 @@ def scrape_character(page, char_url: str, extra_footer: str) -> List[Dict]:
         armor_text = extract_best_block_text(page)
         armor_lines = clean_lines(armor_text.splitlines())
         armor_body = "\n".join(armor_lines[:260])
-        for e in embeds_from_long_text(f"{char_name} — {FR['Armor']}", char_url, armor_body, thumb, extra_footer):
+        for e in embeds_from_long_text(f"{char_name} — {tr('Armor')}", char_url, armor_body, thumb, extra_footer):
             if len(embeds) >= 10:
                 break
             embeds.append(e)
 
-    # Potentials
+    # Potentials (corrigé : tr() + pas de KeyError)
     if len(embeds) < 10 and click_text_safe(page, "Potentials"):
         page.wait_for_timeout(350)
         pot_text = extract_best_block_text(page)
         pot_lines = clean_lines(pot_text.splitlines())
         pot_body = "\n".join(pot_lines[:260])
-        for e in embeds_from_long_text(f"{char_name} — {FR['Potentiels']}", char_url, pot_body, thumb, extra_footer):
+        for e in embeds_from_long_text(f"{char_name} — {tr('Potentials', 'Potentiels')}", char_url, pot_body, thumb, extra_footer):
             if len(embeds) >= 10:
                 break
             embeds.append(e)
@@ -564,7 +552,7 @@ def scrape_boss_tabs(page, url: str, extra_footer: str) -> Dict[str, List[Dict]]
             lines = lines[last_idx:]
 
         body = "\n".join(lines[:320])
-        out[tab] = embeds_from_long_text(f"{FR['Boss Guide']} — {tab}", url, body, thumb, extra_footer)[:10]
+        out[tab] = embeds_from_long_text(f"{tr('Boss Guide')} — {tab}", url, body, thumb, extra_footer)[:10]
 
     return out
 
@@ -601,7 +589,7 @@ def main():
                 upsert_webhook_message(session, state, webhook_map["characters"], key, payload)
                 time.sleep(0.35)
 
-        # Boss tabs (un webhook par boss si présent dans le secret)
+        # Boss tabs -> un webhook par boss si présent dans le secret
         boss_tabs = scrape_boss_tabs(page, URLS["boss_guide"], extra_footer)
         for tab, embeds in boss_tabs.items():
             wh_key = BOSS_WEBHOOK_KEYS.get(tab, "boss_information")
