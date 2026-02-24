@@ -2,7 +2,7 @@ name: Sync 7DS Origin -> Discord
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # toutes les 6h (évite de cramer tes minutes GitHub)
+    - cron: "0 */6 * * *"   # toutes les 6h
   workflow_dispatch:
 
 permissions:
@@ -38,7 +38,7 @@ jobs:
         env:
           DISCORD_WEBHOOKS_JSON: ${{ secrets.DISCORD_WEBHOOKS_JSON }}
           EXTRA_NOTE_FR: ${{ secrets.EXTRA_NOTE_FR }}
-        run: python scripts/sync.py
+        run: PYTHONPATH=. python scripts/sync.py
 
       - name: Commit updated state (if changed)
         run: |
