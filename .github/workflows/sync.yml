@@ -2,7 +2,7 @@ name: Sync 7DS Origin -> Discord
 
 on:
   schedule:
-    - cron: "*/30 * * * *"   # toutes les 30 min (ajuste si besoin)
+    - cron: "*/30 * * * *"   # toutes les 30 min (modifie si besoin)
   workflow_dispatch:
 
 permissions:
@@ -23,9 +23,14 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
+      - name: Install Playwright browser
+        run: python -m playwright install --with-deps chromium
+
       - name: Run sync
         env:
           DISCORD_WEBHOOKS_JSON: ${{ secrets.DISCORD_WEBHOOKS_JSON }}
+          # Optionnel: une note ajoutée à la fin des embeds (en FR)
+          EXTRA_NOTE_FR: ${{ secrets.EXTRA_NOTE_FR }}
         run: python scripts/sync.py
 
       - name: Commit updated state (if changed)
