@@ -1,12 +1,14 @@
 name: Sync 7DS Origin -> Discord
 
 on:
-  schedule:
-    - cron: "0 */6 * * *" # toutes les 6h
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: sync-7ds-origin
+  cancel-in-progress: true
 
 jobs:
   sync:
@@ -19,6 +21,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install deps
         run: pip install -r requirements.txt
@@ -36,17 +39,30 @@ jobs:
 
       - name: Run sync
         env:
-          DISCORD_WEBHOOKS_JSON: ${{ secrets.DISCORD_WEBHOOKS_JSON }}
-          EXTRA_NOTE_FR: ${{ secrets.EXTRA_NOTE_FR }}
-          PYTHONPATH: ./scripts
+          # IMPORTANT: ton package "lib" est dans scripts/lib => PYTHONPATH doit pointer sur "scripts"
+          PYTHONPATH: scripts
+
+          # Webhooks (met-les en GitHub Secrets)
+          WEBHOOK_CHARACTERS: ${{ secrets.WEBHOOK_CHARACTERS }}
+          WEBHOOK_COMBAT: ${{ secrets.WEBHOOK_COMBAT }}
+          WEBHOOK_GENERAL: ${{ secrets.WEBHOOK_GENERAL }}
+          WEBHOOK_BOSS_INFO: ${{ secrets.WEBHOOK_BOSS_INFO }}
+          WEBHOOK_GUARDIAN_GOLEM: ${{ secrets.WEBHOOK_GUARDIAN_GOLEM }}
+          WEBHOOK_DRAKE: ${{ secrets.WEBHOOK_DRAKE }}
+          WEBHOOK_RED_DEMON: ${{ secrets.WEBHOOK_RED_DEMON }}
+          WEBHOOK_GREY_DEMON: ${{ secrets.WEBHOOK_GREY_DEMON }}
+          WEBHOOK_ALBION: ${{ secrets.WEBHOOK_ALBION }}
+
         run: python scripts/sync.py
 
       - name: Commit updated state (if changed)
         run: |
-          if git status --porcelain | grep -q .; then
+          if [[ -n "$(git status --porcelain state)" ]]; then
             git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add state/state.json
-            git commit -m "chore: update sync state [skip ci]"
-            git push
+            git commit -m "chore: update sync state"
+            git push origin HEAD:main
+          else
+            echo "State unchanged"
           fi
