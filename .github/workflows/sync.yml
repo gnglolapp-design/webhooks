@@ -2,7 +2,7 @@ name: Sync 7DS Origin -> Discord
 
 on:
   schedule:
-    - cron: "*/30 * * * *"   # toutes les 30 min (modifie si besoin)
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -29,7 +29,6 @@ jobs:
       - name: Run sync
         env:
           DISCORD_WEBHOOKS_JSON: ${{ secrets.DISCORD_WEBHOOKS_JSON }}
-          # Optionnel: une note ajoutée à la fin des embeds (en FR)
           EXTRA_NOTE_FR: ${{ secrets.EXTRA_NOTE_FR }}
         run: python scripts/sync.py
 
