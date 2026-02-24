@@ -1,66 +1,59 @@
 import json
-import re
 import hashlib
+from pathlib import Path
 from typing import Any, Dict, List
 
-NAV_TRASH = {
-    "HIDEOUT GUIDES",
-    "Hideout Guides - Gacha Game Guides & Tier Lists",
-    "Privacy Policy",
-    "Terms of Service",
-    "©",
-    "© 2026",
-    "Back to Seven Deadly Sins: Origin",
-    "Back to Seven Deadly Sin: Origin",
-}
 
 def stable_hash(obj: Any) -> str:
-    s = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+    raw = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
-def sha(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-def norm_line(s: str) -> str:
-    return re.sub(r"\s+", " ", (s or "")).strip()
+def sha256_bytes(b: bytes) -> str:
+    return hashlib.sha256(b).hexdigest()
 
-def clean_lines(lines: List[str]) -> List[str]:
-    out = []
-    for raw in lines:
-        t = norm_line(raw)
-        if not t:
-            continue
-        if t in NAV_TRASH:
-            continue
-        if t.startswith("Disclaimer:"):
-            continue
-        if t.startswith("©"):
-            continue
-        # lignes parasites vues dans tes embeds
-        if t in {".", "•", "·"}:
-            continue
-        # bullets vides "•"
-        if re.fullmatch(r"[•.\-–—]+", t):
-            continue
-        out.append(t)
-    return out
 
-def chunk_by_chars(text: str, limit: int = 3200) -> List[str]:
-    text = (text or "").strip()
-    if not text:
-        return []
-    if len(text) <= limit:
-        return [text]
-    chunks, cur = [], ""
-    for line in text.splitlines():
-        line = line.rstrip()
-        if not line:
-            continue
-        if len(cur) + len(line) + 1 > limit:
-            chunks.append(cur.strip())
-            cur = line
+def load_json(path: str, default: Any) -> Any:
+    p = Path(path)
+    if not p.exists():
+        return default
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def save_json(path: str, data: Any) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def clean_lines(text: str) -> str:
+    lines = [ln.strip() for ln in (text or "").splitlines()]
+    out: List[str] = []
+    for ln in lines:
+        if not ln:
+            if out and out[-1] == "":
+                continue
+            out.append("")
         else:
-            cur = (cur + "\n" + line) if cur else line
-    if cur.strip():
-        chunks.append(cur.strip())
-    return chunks
+            out.append(ln)
+    return "\n".join(out).strip()
+
+
+def chunk_text(text: str, max_chars: int) -> List[str]:
+    text = text.strip()
+    if len(text) <= max_chars:
+        return [text]
+    chunks: List[str] = []
+    cur: List[str] = []
+    cur_len = 0
+    for part in text.split("\n"):
+        add = (part + "\n")
+        if cur_len + len(add) > max_chars and cur:
+            chunks.append("".join(cur).strip())
+            cur = []
+            cur_len = 0
+        cur.append(add)
+        cur_len += len(add)
+    if cur:
+        chunks.append("".join(cur).strip())
+    return [c for c in chunks if c]
