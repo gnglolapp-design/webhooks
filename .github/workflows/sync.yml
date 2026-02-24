@@ -29,15 +29,13 @@ jobs:
       - name: Cache pip
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/pip
+          path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
 
       - name: Cache Playwright
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/ms-playwright
+          path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-chromium-1155
 
       - name: Cache Argos models
@@ -50,6 +48,7 @@ jobs:
 
       - name: Install deps
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Install Playwright browser
@@ -58,17 +57,19 @@ jobs:
 
       - name: Run sync
         env:
-          PYTHONPATH: scripts
-          # Webhooks (mets tes variables GitHub existantes ici si elles ont d'autres noms)
-          WEBHOOK_PERSONNAGES: ${{ vars.WEBHOOK_PERSONNAGES }}
-          WEBHOOK_COMBAT: ${{ vars.WEBHOOK_COMBAT }}
-          WEBHOOK_INFOS_GENERALES: ${{ vars.WEBHOOK_INFOS_GENERALES }}
-          WEBHOOK_BOSS_INFOS: ${{ vars.WEBHOOK_BOSS_INFOS }}
-          WEBHOOK_GUARDIAN_GOLEM: ${{ vars.WEBHOOK_GUARDIAN_GOLEM }}
-          WEBHOOK_DRAKE: ${{ vars.WEBHOOK_DRAKE }}
-          WEBHOOK_RED_DEMON: ${{ vars.WEBHOOK_RED_DEMON }}
-          WEBHOOK_GREY_DEMON: ${{ vars.WEBHOOK_GREY_DEMON }}
-          WEBHOOK_ALBION: ${{ vars.WEBHOOK_ALBION }}
+          # IMPORTANT: pour que `import lib.*` fonctionne (scripts/lib/...)
+          PYTHONPATH: ${{ github.workspace }}/scripts
+
+          # Webhooks: ce sont des SECRETS (pas vars)
+          WEBHOOK_PERSONNAGES: ${{ secrets.WEBHOOK_PERSONNAGES }}
+          WEBHOOK_COMBAT: ${{ secrets.WEBHOOK_COMBAT }}
+          WEBHOOK_INFOS_GENERALES: ${{ secrets.WEBHOOK_INFOS_GENERALES }}
+          WEBHOOK_BOSS_INFOS: ${{ secrets.WEBHOOK_BOSS_INFOS }}
+          WEBHOOK_GUARDIAN_GOLEM: ${{ secrets.WEBHOOK_GUARDIAN_GOLEM }}
+          WEBHOOK_DRAKE: ${{ secrets.WEBHOOK_DRAKE }}
+          WEBHOOK_RED_DEMON: ${{ secrets.WEBHOOK_RED_DEMON }}
+          WEBHOOK_GREY_DEMON: ${{ secrets.WEBHOOK_GREY_DEMON }}
+          WEBHOOK_ALBION: ${{ secrets.WEBHOOK_ALBION }}
 
           DISCORD_USERNAME: "7DS Origin DB"
           EMBED_COLOR: "#C99700"
@@ -77,7 +78,7 @@ jobs:
 
       - name: Commit updated state (if changed)
         run: |
-          if git status --porcelain | grep -q "^ M state/state.json\|^?? state/state.json"; then
+          if git status --porcelain | grep -qE "^( M|??) state/state\.json$"; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add state/state.json
