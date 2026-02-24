@@ -2,7 +2,7 @@ name: Sync 7DS Origin -> Discord
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # toutes les 6h
+    - cron: "0 */6 * * *" # toutes les 6h
   workflow_dispatch:
 
 permissions:
@@ -34,11 +34,23 @@ jobs:
             ~/.cache/argos-translate
           key: argos-en-fr-v1
 
+      # DEBUG (utile pour vérifier où est lib/)
+      - name: Debug repo tree
+        run: |
+          echo "PWD=$(pwd)"
+          echo "---- ls ----"
+          ls -la
+          echo "---- find (depth 3) ----"
+          find . -maxdepth 3 -type f | sed 's|^\./||'
+          echo "---- python path ----"
+          python -c "import sys; print('\n'.join(sys.path))"
+
       - name: Run sync
         env:
           DISCORD_WEBHOOKS_JSON: ${{ secrets.DISCORD_WEBHOOKS_JSON }}
           EXTRA_NOTE_FR: ${{ secrets.EXTRA_NOTE_FR }}
-        run: PYTHONPATH=. python scripts/sync.py
+          PYTHONPATH: .:./scripts
+        run: python scripts/sync.py
 
       - name: Commit updated state (if changed)
         run: |
