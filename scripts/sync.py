@@ -1,173 +1,122 @@
-import json
 import os
-from typing import Any, Dict, List
+import json
+from datetime import datetime, timezone
 
-import requests
-from playwright.sync_api import sync_playwright
-
-from lib.discord_api import replace_message
+from lib.discord_api import WebhookClient
 from lib.scrape_hideout import (
-    scrape_character_urls,
-    scrape_character,
-    scrape_boss_tabs,
-    scrape_topics,
-    URL_GENERAL,
-    URL_COMBAT,
+    scrape_all_characters,
+    scrape_general_information,
+    scrape_combat_guide,
+    scrape_bosses,
 )
-
-STATE_PATH = os.getenv("STATE_PATH", "state/state.json")
-
-# Webhooks (env)
-WEBHOOK_CHARACTERS = os.getenv("WEBHOOK_CHARACTERS", "")
-WEBHOOK_GENERAL = os.getenv("WEBHOOK_GENERAL", "")
-WEBHOOK_COMBAT = os.getenv("WEBHOOK_COMBAT", "")
-
-WEBHOOK_BOSS_INFO = os.getenv("WEBHOOK_BOSS_INFO", "")
-WEBHOOK_GUARDIAN_GOLEM = os.getenv("WEBHOOK_GUARDIAN_GOLEM", "")
-WEBHOOK_DRAKE = os.getenv("WEBHOOK_DRAKE", "")
-WEBHOOK_RED_DEMON = os.getenv("WEBHOOK_RED_DEMON", "")
-WEBHOOK_GREY_DEMON = os.getenv("WEBHOOK_GREY_DEMON", "")
-WEBHOOK_ALBION = os.getenv("WEBHOOK_ALBION", "")
+from lib.utils import load_json, save_json, stable_hash
 
 
-def load_state() -> Dict[str, Any]:
-    if not os.path.exists(STATE_PATH):
-        return {"messages": {}}
-    with open(STATE_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+STATE_PATH = "state/state.json"
 
 
-def save_state(state: Dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
-    with open(STATE_PATH, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+def env(name: str) -> str:
+    v = os.getenv(name, "").strip()
+    if not v:
+        raise RuntimeError(f"Variable manquante: {name}")
+    return v
 
 
-def upsert_items(
-    session: requests.Session,
-    state: Dict[str, Any],
-    webhook_url: str,
-    items,
-) -> None:
-    if not webhook_url:
-        return
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
-    msg_state: Dict[str, Any] = state.setdefault("messages", {})
-    for it in items:
-        prev = msg_state.get(it.key, {})
-        prev_hash = prev.get("hash")
-        prev_id = prev.get("message_id")
 
-        if prev_hash == it.content_hash and prev_id:
-            # inchangé
-            continue
+def main():
+    state = load_json(STATE_PATH, default={"messages": {}})
 
-        # Remplacement robuste: POST nouveau + DELETE ancien
-        new_id = replace_message(
-            session,
-            webhook_url,
-            prev_id,
-            it.payload,
-            files=it.files,
+    webhooks = {
+        "personnages": env("WEBHOOK_PERSONNAGES"),
+        "combat": env("WEBHOOK_COMBAT"),
+        "infos_generales": env("WEBHOOK_INFOS_GENERALES"),
+        "boss_infos": env("WEBHOOK_BOSS_INFOS"),
+        "guardian_golem": env("WEBHOOK_GUARDIAN_GOLEM"),
+        "drake": env("WEBHOOK_DRAKE"),
+        "red_demon": env("WEBHOOK_RED_DEMON"),
+        "grey_demon": env("WEBHOOK_GREY_DEMON"),
+        "albion": env("WEBHOOK_ALBION"),
+    }
+
+    username = os.getenv("DISCORD_USERNAME", "7DS Origin DB")
+    color_hex = os.getenv("EMBED_COLOR", "#C99700")
+
+    client = WebhookClient(username=username)
+
+    # -------- PERSONNAGES --------
+    chars = scrape_all_characters(color_hex=color_hex)
+    print(f"[CHAR] roster={len(chars)}")
+    for c in chars:
+        key_base = f"character::{c['slug']}"
+        for i, msg in enumerate(c["messages"], start=1):
+            key = key_base if len(c["messages"]) == 1 else f"{key_base}::p{i}"
+            client.replace_message(
+                state=state["messages"],
+                key=key,
+                webhook_url=webhooks["personnages"],
+                payload=msg["payload"],
+                files=msg.get("files", {}),
+            )
+
+    # -------- INFOS GENERALES (6 sous-sections) --------
+    general = scrape_general_information(color_hex=color_hex)
+    print(f"[GEN] topics={len(general)}")
+    for g in general:
+        key = f"general::{g['slug']}"
+        client.replace_message(
+            state=state["messages"],
+            key=key,
+            webhook_url=webhooks["infos_generales"],
+            payload=g["payload"],
+            files=g.get("files", {}),
         )
-        msg_state[it.key] = {"message_id": new_id, "hash": it.content_hash}
 
+    # -------- COMBAT GUIDE (sections) --------
+    combat = scrape_combat_guide(color_hex=color_hex)
+    print(f"[COMBAT] sections={len(combat)}")
+    for s in combat:
+        key = f"combat::{s['slug']}"
+        client.replace_message(
+            state=state["messages"],
+            key=key,
+            webhook_url=webhooks["combat"],
+            payload=s["payload"],
+            files=s.get("files", {}),
+        )
 
-def boss_webhook_for_key(boss_key: str) -> str:
-    # boss_key = "boss::guardian-golem" etc.
-    slug = boss_key.split("::", 1)[-1]
-    if slug == "information":
-        return WEBHOOK_BOSS_INFO
-    if "guardian" in slug:
-        return WEBHOOK_GUARDIAN_GOLEM
-    if "drake" in slug:
-        return WEBHOOK_DRAKE
-    if "red" in slug:
-        return WEBHOOK_RED_DEMON
-    if "grey" in slug or "gray" in slug:
-        return WEBHOOK_GREY_DEMON
-    if "albion" in slug:
-        return WEBHOOK_ALBION
-    # fallback: boss-infos
-    return WEBHOOK_BOSS_INFO
+    # -------- BOSS --------
+    bosses = scrape_bosses(color_hex=color_hex)
+    print(f"[BOSS] items={len(bosses)}")
 
+    # boss infos (général)
+    for item in bosses:
+        slug = item["slug"]
+        if slug == "information":
+            webhook = webhooks["boss_infos"]
+        else:
+            # 1 salon par boss
+            webhook = webhooks.get(slug)
+            if not webhook:
+                # si un boss nouveau apparaît sans salon dédié, on le route vers boss_infos
+                webhook = webhooks["boss_infos"]
 
-def main() -> None:
-    state = load_state()
-    sess = requests.Session()
+        key_base = f"boss::{slug}"
+        for i, msg in enumerate(item["messages"], start=1):
+            key = key_base if len(item["messages"]) == 1 else f"{key_base}::p{i}"
+            client.replace_message(
+                state=state["messages"],
+                key=key,
+                webhook_url=webhook,
+                payload=msg["payload"],
+                files=msg.get("files", {}),
+            )
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 1280, "height": 720})
-
-        # =========
-        # CHARACTERS
-        # =========
-        if WEBHOOK_CHARACTERS:
-            urls = scrape_character_urls(page)
-            # dédoublonnage sécurité
-            seen = set()
-            items = []
-            for u in urls:
-                if u in seen:
-                    continue
-                seen.add(u)
-                try:
-                    items.append(scrape_character(page, u))
-                except Exception:
-                    # passe-outre: on continue
-                    continue
-
-            upsert_items(sess, state, WEBHOOK_CHARACTERS, items)
-
-        # ==============
-        # GENERAL TOPICS
-        # ==============
-        if WEBHOOK_GENERAL:
-            try:
-                general_items = scrape_topics(
-                    page,
-                    URL_GENERAL,
-                    key_prefix="general",
-                    title_prefix="Infos générales",
-                )
-                upsert_items(sess, state, WEBHOOK_GENERAL, general_items)
-            except Exception:
-                pass
-
-        # ============
-        # COMBAT GUIDE
-        # ============
-        if WEBHOOK_COMBAT:
-            try:
-                combat_items = scrape_topics(
-                    page,
-                    URL_COMBAT,
-                    key_prefix="combat",
-                    title_prefix="Combat",
-                )
-                upsert_items(sess, state, WEBHOOK_COMBAT, combat_items)
-            except Exception:
-                pass
-
-        # =========
-        # BOSSES
-        # =========
-        try:
-            boss_items = scrape_boss_tabs(page)
-            # 1 message par boss, envoyé dans son webhook dédié
-            for it in boss_items:
-                wh = boss_webhook_for_key(it.key)
-                try:
-                    upsert_items(sess, state, wh, [it])
-                except Exception:
-                    continue
-        except Exception:
-            pass
-
-        browser.close()
-
-    save_state(state)
+    state["meta"] = {"updated_at": now_iso(), "hash": stable_hash(state["messages"])}
+    save_json(STATE_PATH, state)
+    print("[OK] terminé")
 
 
 if __name__ == "__main__":
