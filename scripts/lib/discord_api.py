@@ -1,208 +1,144 @@
+import json
+import re
 import time
-from typing import Any, Dict, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
-from requests.adapters import HTTPAdapter
-
-try:
-    from urllib3.util.retry import Retry
-except Exception:  # pragma: no cover
-    Retry = None  # type: ignore
 
 
-DISCORD_API_TIMEOUT = 30
-MAX_RETRIES = 6
+@dataclass(frozen=True)
+class Webhook:
+    id: str
+    token: str
+
+    @property
+    def base_url(self) -> str:
+        return f"https://discord.com/api/webhooks/{self.id}/{self.token}"
 
 
-class DiscordHTTPError(RuntimeError):
-    def __init__(self, status: int, url: str, body: str = ""):
-        super().__init__(f"Discord HTTP {status} sur {url} :: {body[:400]}")
-        self.status = status
-        self.url = url
-        self.body = body
+def parse_webhook(url: str) -> Webhook:
+    m = re.match(r"^https://discord\.com/api/webhooks/(\d+)/([^/]+)$", url.strip())
+    if not m:
+        raise ValueError("Webhook URL invalide")
+    return Webhook(id=m.group(1), token=m.group(2))
 
 
-def http_session() -> requests.Session:
-    """
-    Session requests avec retries réseau (et quelques 5xx).
-    Les 429 Discord sont gérés dans discord_request().
-    """
-    s = requests.Session()
-
-    if Retry is not None:
-        # Compat urllib3 (allowed_methods vs method_whitelist)
-        try:
-            retry = Retry(
-                total=5,
-                connect=5,
-                read=5,
-                backoff_factor=0.5,
-                status_forcelist=[500, 502, 503, 504],
-                allowed_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-                raise_on_status=False,
-            )
-        except TypeError:
-            retry = Retry(
-                total=5,
-                connect=5,
-                read=5,
-                backoff_factor=0.5,
-                status_forcelist=[500, 502, 503, 504],
-                method_whitelist=["GET", "POST", "PUT", "PATCH", "DELETE"],  # type: ignore
-                raise_on_status=False,
-            )
-
-        adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10)
-        s.mount("https://", adapter)
-        s.mount("http://", adapter)
-
-    return s
-
-
-def _sleep_backoff(attempt: int) -> None:
-    time.sleep(min(2 ** attempt, 20))
+def _sleep_rate_limit(resp: requests.Response) -> None:
+    try:
+        data = resp.json()
+        retry_after = float(data.get("retry_after", 1.0))
+    except Exception:
+        retry_after = 1.0
+    time.sleep(max(1.0, retry_after))
 
 
 def discord_request(
     session: requests.Session,
     method: str,
     url: str,
+    *,
     json_payload: Optional[Dict[str, Any]] = None,
-    timeout: int = DISCORD_API_TIMEOUT,
-    allow_404: bool = False,
-) -> Tuple[int, Optional[Dict[str, Any]], str]:
+    files: Optional[List[Tuple[str, bytes, str]]] = None,
+    timeout: int = 45,
+    max_retries: int = 6,
+) -> requests.Response:
     """
-    Retourne: (status_code, json|None, text)
-    Gère 429 (rate limit) avec retries.
+    - Gère 429 (rate limit)
+    - Retries sur 5xx/timeout
     """
-    headers = {
-        "User-Agent": "7DS-Origin-DB-Sync/1.0",
-        "Content-Type": "application/json",
-    }
-
-    last_text = ""
-    for attempt in range(MAX_RETRIES):
+    for attempt in range(max_retries):
         try:
-            resp = session.request(
-                method=method.upper(),
-                url=url,
-                headers=headers,
-                json=json_payload,
-                timeout=timeout,
-            )
-        except requests.RequestException as e:
-            last_text = str(e)
-            _sleep_backoff(attempt)
+            if files:
+                multipart = {}
+                for i, (filename, content, mime) in enumerate(files):
+                    multipart[f"files[{i}]"] = (filename, content, mime)
+
+                data = {
+                    "payload_json": json.dumps(json_payload or {}, ensure_ascii=False)
+                }
+                resp = session.request(
+                    method,
+                    url,
+                    data=data,
+                    files=multipart,
+                    timeout=timeout,
+                )
+            else:
+                resp = session.request(
+                    method,
+                    url,
+                    json=json_payload,
+                    timeout=timeout,
+                )
+        except requests.RequestException:
+            time.sleep(1.5 * (attempt + 1))
             continue
 
-        last_text = resp.text or ""
-
-        # Rate limit
         if resp.status_code == 429:
-            try:
-                data = resp.json()
-                retry_after = float(data.get("retry_after", 1.0))
-            except Exception:
-                retry_after = 1.0
-            time.sleep(min(retry_after, 10.0))
+            _sleep_rate_limit(resp)
             continue
 
-        # OK
-        if 200 <= resp.status_code < 300:
-            if resp.text:
-                try:
-                    return resp.status_code, resp.json(), last_text
-                except Exception:
-                    return resp.status_code, None, last_text
-            return resp.status_code, None, last_text
-
-        # 404 autorisé
-        if resp.status_code == 404 and allow_404:
-            return resp.status_code, None, last_text
-
-        # 5xx -> retry limité
-        if 500 <= resp.status_code < 600 and attempt < MAX_RETRIES - 1:
-            _sleep_backoff(attempt)
+        if 500 <= resp.status_code < 600:
+            time.sleep(1.5 * (attempt + 1))
             continue
 
-        raise DiscordHTTPError(resp.status_code, url, last_text)
+        return resp
 
-    raise DiscordHTTPError(0, url, f"Échec après retries: {last_text}")
-
-
-def _webhook_base(webhook_url: str) -> str:
-    return webhook_url.rstrip("/")
+    return resp  # dernier
 
 
-def create_webhook_message(
+def post_message(
     session: requests.Session,
     webhook_url: str,
     payload: Dict[str, Any],
-) -> str:
-    url = f"{_webhook_base(webhook_url)}?wait=true"
-    status, data, _ = discord_request(session, "POST", url, json_payload=payload)
-    if not data or "id" not in data:
-        raise RuntimeError(f"Réponse Discord inattendue à la création (status={status}).")
-    return str(data["id"])
+    files: Optional[List[Tuple[str, bytes, str]]] = None,
+) -> Dict[str, Any]:
+    wh = parse_webhook(webhook_url)
+    url = f"{wh.base_url}?wait=true"
+    resp = discord_request(session, "POST", url, json_payload=payload, files=files)
+    if resp.status_code not in (200, 204):
+        raise RuntimeError(f"POST webhook échoué: {resp.status_code} {resp.text}")
+    if resp.status_code == 204:
+        return {}
+    return resp.json()
 
 
-def edit_webhook_message(
+def delete_message(
     session: requests.Session,
     webhook_url: str,
     message_id: str,
-    payload: Dict[str, Any],
-) -> Tuple[bool, str]:
-    url = f"{_webhook_base(webhook_url)}/messages/{message_id}"
-    status, _, text = discord_request(
-        session, "PATCH", url, json_payload=payload, allow_404=True
-    )
-    if status == 404:
-        return False, text
-    return True, ""
+) -> None:
+    wh = parse_webhook(webhook_url)
+    url = f"{wh.base_url}/messages/{message_id}"
+    resp = discord_request(session, "DELETE", url)
+    # 404 => déjà supprimé, on ignore
+    if resp.status_code not in (204, 200, 404):
+        raise RuntimeError(f"DELETE échoué: {resp.status_code} {resp.text}")
 
 
-def upsert_message(
+def replace_message(
     session: requests.Session,
-    state: Dict[str, Any],
-    section: str,
     webhook_url: str,
-    item_key: str,
+    old_message_id: Optional[str],
     payload: Dict[str, Any],
-    src_hash: str,
-    strict_no_duplicate: bool = True,
-) -> bool:
+    files: Optional[List[Tuple[str, bytes, str]]] = None,
+) -> str:
     """
-    - Si hash identique: skip
-    - Si message_id: PATCH, si 404 => POST + update state
-    - Sinon: POST
+    Remplacement robuste:
+    1) POST nouveau message (avec screenshots)
+    2) DELETE ancien message (si présent)
     """
-    if not webhook_url:
-        raise RuntimeError(f"Webhook manquant pour section={section}")
+    new_msg = post_message(session, webhook_url, payload, files=files)
+    new_id = str(new_msg.get("id", "")) if new_msg else ""
+    if not new_id:
+        # si Discord ne renvoie pas l'id (rare), on laisse vide => l'état ne sera pas stable
+        raise RuntimeError("Discord n'a pas renvoyé l'ID du message (wait=true requis).")
 
-    sec = state.setdefault(section, {})
-    entry = sec.get(item_key, {}) if isinstance(sec, dict) else {}
-    prev_hash = entry.get("hash")
-    prev_mid = entry.get("message_id")
+    if old_message_id:
+        try:
+            delete_message(session, webhook_url, old_message_id)
+        except Exception:
+            pass
 
-    if prev_hash and prev_hash == src_hash:
-        print(f"[{section.upper()}] {item_key} inchangé -> skip")
-        return False
-
-    if prev_mid:
-        exists, _ = edit_webhook_message(session, webhook_url, str(prev_mid), payload)
-        if exists:
-            sec[item_key] = {"message_id": str(prev_mid), "hash": src_hash}
-            print(f"[{section.upper()}] {item_key} -> message mis à jour")
-            return True
-
-        # 404: message supprimé => on recrée (pas un doublon)
-        new_id = create_webhook_message(session, webhook_url, payload)
-        sec[item_key] = {"message_id": new_id, "hash": src_hash}
-        print(f"[{section.upper()}] {item_key} -> message recréé (ancien introuvable)")
-        return True
-
-    # pas de message_id
-    new_id = create_webhook_message(session, webhook_url, payload)
-    sec[item_key] = {"message_id": new_id, "hash": src_hash}
-    print(f"[{section.upper()}] {item_key} -> message créé")
-    return True
+    return new_id
