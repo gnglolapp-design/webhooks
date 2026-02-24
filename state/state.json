@@ -1,3 +1,124 @@
 {
-  "messages": {}
+  "messages": {
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/ban": {
+      "message_id": "1475794332840624230",
+      "hash": "6c1f9aae5c8b26eda917f26910dce99bdbff4a663091518af5fbab3a2e6f18ac"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/bug": {
+      "message_id": "1475794335252353119",
+      "hash": "746192fdaf8704a29434f66eb839b6f05b461c9e57a80433a04cb5ead3d5714c"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/daisy": {
+      "message_id": "1475794337903149068",
+      "hash": "1427ead0f8ab645510b2fade6535fcbd96462c147993d247f0004d3672654ade"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/derieri": {
+      "message_id": "1475794340168073247",
+      "hash": "87653f6d61441d9e10031a623c3b21198c2c16f587f0c79ed5b47e2d85e4d2f4"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/diane": {
+      "message_id": "1475794342730924042",
+      "hash": "58d6eda57edfaf3d48bdd8c38505f6ff105a26c7698f6a5eaee16f10fc3fce42"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/drake": {
+      "message_id": "1475794344194605158",
+      "hash": "d9df34b942017be0643849b169f015e8f049f6be64960adcc5898ee3d993bc19"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/dreydrin": {
+      "message_id": "1475794346669379586",
+      "hash": "acc748f0e379baa72fc1ebeaaf800e893373d7d40fc9764967e7927ae75f9ed0"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/dreyfus": {
+      "message_id": "1475794349056065700",
+      "hash": "87e4b209851690c0cc55168250fccfe1328cc5c4712be8e183ea1426d5c8556b"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/elaine": {
+      "message_id": "1475794351375515740",
+      "hash": "cd14bc618e3a4beab7ea01081ffbb1da797c6e8f87509c95b19367065b69bbc5"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/elizabeth": {
+      "message_id": "1475794353820664046",
+      "hash": "401a2efdb4f42c3aabb858feb71c44ac14aae58302bb9544f13c9c12776dca38"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/escanor": {
+      "message_id": "1475794356479987755",
+      "hash": "b6b53b3811b74599cfcc7bc3d51e0c339b90fca2bf91b3dcdc4280a7e1742c82"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/gil-thunder": {
+      "message_id": "1475794359483105323",
+      "hash": "9dc8028b927f3a8bacec84405668247d7ef710c5c8965cdaad18229b00e8f826"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/gowther": {
+      "message_id": "1475794362062340127",
+      "hash": "d60af2f93d6633bb341b04b433e960702b5366385e6c9bd1f5e33f14c9c99574"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/griamore": {
+      "message_id": "1475794364075610113",
+      "hash": "e6033c90be566919b17ac1a40938295885eed551052797443d79562588172084"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/guila": {
+      "message_id": "1475794366361505905",
+      "hash": "e5007de9f6a09051d86fb0fdcbd3b549d8fa01e0af1da1c6ac8ece14ea313286"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/hendrickson": {
+      "message_id": "1475794368836276266",
+      "hash": "34ec358a29fc8d0e999be831d5724850498b7af46706d7701a395444e534a4d5"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/howzer": {
+      "message_id": "1475794370966978611",
+      "hash": "e76a0e1698dd30457fb133381d7710bf0a487f95bb147e9f56fdd0c856ca0e07"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/jericho": {
+      "message_id": "1475794374041272320",
+      "hash": "388dccfeef94b11ddbcb243843f67d6810e238ebc9d7f920b636a50d60e47598"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/king": {
+      "message_id": "1475794376419446835",
+      "hash": "8f8be145717648dc7c0d315d85d11a15f4ca180da8fbc6458719f64b4838a735"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/klotho": {
+      "message_id": "1475794378260877322",
+      "hash": "9bfcdd2e61d377607744a01d813cdfa595dbd25575e84bf5def42a2647ecd097"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/liz": {
+      "message_id": "1475794380693700702",
+      "hash": "23eefecb04cf94ce44290f48f7cfbe374a9422fe2354305739b2c3b29de78189"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/manny": {
+      "message_id": "1475794382765690992",
+      "hash": "c61a6d8dd2f4a24becdfe4f59f06e94b34061295f51765ff08d972881fd70044"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/meliodas": {
+      "message_id": "1475794384824959038",
+      "hash": "c18987d2430727af27e932400a68cc08ffa5a13bc62efff1f12d132a647792f6"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/merlin": {
+      "message_id": "1475794387882737688",
+      "hash": "01fad1f6c739447da54bb344a70834299a71f46b920878f31b9e902a046debe7"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/slader": {
+      "message_id": "1475794391565340835",
+      "hash": "0cd6777eb9e7147b21b2a1fff232734bdf2ed1e50b16484a047b05b0a656ad21"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/tioreh": {
+      "message_id": "1475794393930793031",
+      "hash": "cf56eb4079d05e3f786bafdb5485db4bf84bf9d8cb55a5d4d46d679044850b6d"
+    },
+    "character::https://hideoutgacha.com/games/seven-deadly-sins-origin/characters/tristan": {
+      "message_id": "1475794396573077637",
+      "hash": "1896231b3d26e0ba3ded53160222063a681b7bee98ac478543b67b8ed60305b8"
+    },
+    "combat::https://hideoutgacha.com/games/seven-deadly-sins-origin/combat-guide": {
+      "message_id": "1475794398716625000",
+      "hash": "2116bc5d654289d987aa764a12bfb77e6fe2034259bb994ebe2dc7c684eb3b15"
+    },
+    "general::https://hideoutgacha.com/games/seven-deadly-sins-origin/general-info": {
+      "message_id": "1475794401778466908",
+      "hash": "683206b414ea2ddb18b241c3b5d141670a0c122ad174c3f423021047e4864fd9"
+    },
+    "boss::https://hideoutgacha.com/games/seven-deadly-sins-origin/boss-guide": {
+      "message_id": "1475794406391943182",
+      "hash": "40e27c6fe4b5e9b7c873317cb40370003d0df02ac43dbe1189877918898a7aa5"
+    }
+  }
 }
